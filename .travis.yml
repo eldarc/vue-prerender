@@ -1,0 +1,12 @@
+os:
+  - linux
+
+language: node_js
+
+node_js: node
+
+cache:
+  yarn: true
+
+after_script:
+  - cat ./coverage/lcov.info | ./node_modules/coveralls/bin/coveralls.js
