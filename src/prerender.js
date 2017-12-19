@@ -89,7 +89,7 @@ async function main (port, targetPath, options) {
   LOG.info(`Started server ${HOST}`)
 
   // Launching Puppeteer.
-  browser = await puppeteer.launch()
+  browser = await puppeteer.launch({args: ['--no-sandbox', '--disable-setuid-sandbox']})
 
   LOG.info('Started browser.')
 
