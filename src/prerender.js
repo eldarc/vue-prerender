@@ -1,5 +1,5 @@
 /*!
- * vue-prerender v0.0.1
+ * vue-prerender v0.0.4
  * Copyright (c) 2017-present, Eldar Cejvanovic
  * License: MIT
  * Inspired by: https://blog.cloudboost.io/prerender-an-angular-application-with-angular-cli-and-puppeteer-25dede2f0252
@@ -13,14 +13,14 @@ const { readFile, exists, writeFile } = require('mz/fs')
 const del = require('del')
 const { ncp } = require('ncp')
 const mkdirp = require('mkdirp-promise')
-const { uniq, difference, merge, range } = require('lodash')
+const { uniq, difference, merge, cloneDeep } = require('lodash')
 const { tidy } = require('htmltidy2')
 const portfinder = require('portfinder')
 
 // Default port.
 const DEFAULT_PORT = 4848
 
-// Browser and server so that it can be closed anywhere
+// Browser and server so that it can be closed anywhere.
 let browser
 let server
 
@@ -78,7 +78,7 @@ async function main (port, targetPath, options) {
   // Serving the static files.
   app.get('*.*', express.static(sourcePath))
 
-  // Serving index.html, when a puppeters request the index page.
+  // Serving index.html, when puppeter requests the index page.
   app.get('*', (req, res) => res.send(index))
 
   // Starting the express server.
@@ -286,85 +286,164 @@ async function main (port, targetPath, options) {
       paths = removeIgnoredPaths(paths)
 
       const mockAllParams = (path, keys) => {
-        // Convert all matched keys to a more approachable format:
-        // Array which contains objects in from of [{key: value1}, {key: value2}], instead of {key: [value1, value2]}
-        const mockData = []
-        keys.forEach((_key) => {
-          if (options.routerParams[_key]) {
-            const _mockData = []
-            options.routerParams[_key].forEach((_paramCollection) => {
-              _mockData.push({[_key]: _paramCollection})
-            })
+        // Flatten parameter value rules to a single array for each parameter.
+        const _flattenObject = (key) => {
+          if (options.routerParams[key]) {
+            let _flattened = []
 
-            mockData.push(_mockData)
+            const _flatten = (_obj, _key) => {
+              for (const prop of Object.keys(_obj[_key])) {
+                if (_obj[_key][prop] instanceof Array) {
+                  _flattened.push(..._obj[_key][prop])
+                } else {
+                  _flatten(_obj[_key], prop)
+                }
+              }
+            }
+            _flatten(options.routerParams, key)
+
+            return _flattened
           }
-        })
 
-        // Generate an array which contains all possible combinations of values.
-        const allCombinations = (() => {
-          // Generate a possibility map which is essentially a map of indexes of values.
-          // Each row in the array represents a combination.
-          // Each index of the column of the array represents the index of the key (row) in the `mockData` array.
-          // Each value of the column of the array represents the index of the value (element) in the `mockData` row.
-          const possibilityMap = (() => {
-            const _possibilityMap = []
+          return []
+        }
 
-            for (let i in mockData) {
-              _possibilityMap[i] = range(0, mockData[i].length)
+        // Generate a collection of flattened arrays.
+        const _valueArrays = (() => {
+          const _arr = []
+          for (const key of keys) {
+            _arr.push({
+              key: key,
+              values: uniq(_flattenObject(key))
+            })
+          }
+
+          return _arr
+        })()
+
+        // Check if the current combination of parameters is valid.
+        const _isCombinationValid = (parameters) => {
+          let isValid = true
+          const parameterKeys = Object.keys(parameters)
+
+          // If there is only one parameter, check if its value is in the default array, and return immediately as valid or invalid.
+          // In these cases checking the dependencies is unnecessary.
+          if (parameterKeys.length === 1) {
+            const parameterValue = parameters[parameterKeys[0]]
+            const parameterRules = options.routerParams[parameterKeys[0]]
+
+            if (!(parameterRules._default._default.includes(parameterValue))) {
+              isValid = false
             }
 
-            const cartesian = function () {
-              let r = []
-              let arg = arguments
-              let max = arg.length - 1
+            return isValid
+          }
 
-              const helper = function (arr, i) {
-                for (let j = 0, l = arg[i].length; j < l; j++) {
-                  let a = arr.slice(0)
-                  a.push(arg[i][j])
+          // For each parameter, loop trough all the other parameters and check dependencies between them.
+          for (const parameterKey of parameterKeys) {
+            // If the parameter is already invalid break the loop.
+            if (isValid === false) {
+              break
+            }
 
-                  if (i === max) {
-                    r.push(a)
-                  } else {
-                    helper(a, i + 1)
+            const parameterValue = parameters[parameterKey]
+
+            // Parameter rules contain possible values of the current parameter, and dependencies on other parameters.
+            const parameterRules = options.routerParams[parameterKey]
+
+            // If there isn't a rule definition for the parameter, continue.
+            if (!parameterRules) {
+              continue
+            }
+
+            // Iterate through all the other parameters in the combination.
+            for (const otherParameterKey of parameterKeys) {
+              // Skip when on the current `parameterKey`.
+              if (otherParameterKey === parameterKey) {
+                continue
+              }
+
+              const otherParameterValue = parameters[otherParameterKey]
+
+              // If there is a specific definition of what parameters are allowed in a combination,
+              // based on that array assume allowed values for the current parameter.
+              let allowedValues = []
+              if (parameterRules[otherParameterKey] && parameterRules[otherParameterKey][otherParameterValue]) {
+                allowedValues = parameterRules[otherParameterKey][otherParameterValue]
+              } else if (parameterRules[otherParameterKey] && parameterRules[otherParameterKey]._default) {
+                allowedValues = parameterRules[otherParameterKey]._default
+              }
+
+              // If the `allowedValues` array has items and the current parameter isn't included, flag the combination as invalid.
+              if (allowedValues.length > 0 && !allowedValues.includes(parameterValue)) {
+                isValid = false
+                break
+              } else {
+                // If there aren't specific definition of what values are allowed, try to assume by checking the other parameter value.
+                if (parameterRules[otherParameterKey]) {
+                  let allowedOtherValues = []
+                  // For each other parameter rule for the current parameter rules get the key,
+                  // and if that rule contains the current parameter value add the key as a other parameter allowed value.
+                  for (const _otherParameterValue of Object.keys(parameterRules[otherParameterKey])) {
+                    if (parameterRules[otherParameterKey][_otherParameterValue].includes(parameterValue)) {
+                      allowedOtherValues.push(_otherParameterValue)
+                    }
+                  }
+
+                  // If the list of other parameter allowed values has items and doesn't include the current other parameter value flag it as invalid.
+                  if (allowedOtherValues.length > 0 && !allowedOtherValues.includes(otherParameterValue)) {
+                    isValid = false
+                    break
                   }
                 }
               }
+            }
+          }
 
-              helper([], 0)
-              return r
+          return isValid
+        }
+
+        // Valid combinations are stored into the `allValidCombinations` array.
+        const allValidCombinations = []
+
+        // Generates a combination and places it into `__OBJECT_BUFFER`.
+        // With every iteration `__OBJECT_BUFFER` is reset.
+        // Generate all possible combinations, and for each check validity with `_isCombinationValid`.
+        // Push all valid combinations to the `allValidCombinations`.
+        let __OBJECT_BUFFER = {}
+        ;(function _generateCombinations (index = 0) {
+          if (index < _valueArrays.length) {
+            const param = _valueArrays[index]
+
+            if (param.values.length === 0) {
+              param.values = ['']
             }
 
-            if (_possibilityMap.length > 0) {
-              return cartesian(..._possibilityMap)
-            } else {
-              return [0]
-            }
-          })()
-
-          // Using the possibility map generate all possible combinations.
-          return (() => {
-            let _combinations = []
-
-            possibilityMap.forEach((_combination) => {
-              const generatedCombination = {}
-
-              for (let i in _combination) {
-                const valueIndex = _combination[i]
-                merge(generatedCombination, mockData[i][valueIndex])
+            for (const value of param.values) {
+              if (index === 0) {
+                __OBJECT_BUFFER = {}
               }
 
-              _combinations.push(generatedCombination)
-            })
+              __OBJECT_BUFFER[param.key] = value
 
-            return _combinations
-          })()
+              if (index === _valueArrays.length - 1) {
+                const _object = cloneDeep(__OBJECT_BUFFER)
+
+                if (_isCombinationValid(_object)) {
+                  allValidCombinations.push(_object)
+                }
+              } else {
+                _generateCombinations(index + 1)
+              }
+            }
+          }
         })()
 
         // Generate paths based on generated parameter combination and render valid paths.
         const toPath = pathToRegexp.compile(path)
+
         let _paths = []
-        allCombinations.forEach((params) => {
+        allValidCombinations.forEach((params) => {
           try {
             _paths.push(toPath(params))
           } catch (err) {
@@ -385,7 +464,11 @@ async function main (port, targetPath, options) {
           return _key.name
         })
 
-        const allPaths = mockAllParams(_path, keys)
+        let allPaths = [_path]
+        if (keys.length > 0) {
+          allPaths = mockAllParams(_path, keys)
+        }
+
         for (let _path of allPaths) {
           // Load the current path.
           await page.goto(`${HOST}/${removeLeadingSlash(_path)}`)
@@ -430,7 +513,7 @@ const _defaultOptions = {
   } // Beautify HTML.
 }
 
-const _fixOptions = function (options) {
+const _parseOptions = function (options) {
   if (options.logLevel !== 0 && options.logLevel !== 1 && options.logLevel !== 2 && options.logLevel !== 3) {
     options.logLevel = 0
   }
@@ -457,6 +540,80 @@ const _fixOptions = function (options) {
     options.routerParams = {}
   }
 
+  // Reconfigure the router parameters so that it has following format:
+  // {
+  //   parameterKey: {
+  //     _default: { // Will be converted to _default._default array even there is just an array or string.
+  //       _default: [value1, value2, ..., valueN] // Required.
+  //     },
+  //     otherParameterKey: {
+  //       _default: [thisParameterValue3, thisParameterValue4, ..., valueN], // For other parameters inside aparameterr rule object this is optional. This will be used if the otherParameter is in combination with the parameter, but no other rules are defined.
+  //       otherParameterValue: [thisParameterValue1, thisParameterValue2, thisParameterValueN] // Parameters to be set when otherParameterValue has certain value.
+  //     }
+  //   },
+  //   otherParameterKey: {
+  //     _default: {
+  //       _default: [value1, value2, ..., valueN] // Required.
+  //     }
+  //   }
+  // }
+  // All strings and numbers at any level will be converted to an array with just that value in the array.
+  // Objects are parsed until the last level, where a blank array will be set if there is no string, number or array.
+  // Proper arrays will be set as the data set.
+  const _checkArray = (_arr) => {
+    for (const i in _arr) {
+      if (_arr[i] === '') {
+        _arr[i] = undefined
+      }
+    }
+
+    return _arr
+  }
+  for (const routerParam of Object.keys(options.routerParams)) {
+    if (options.routerParams[routerParam] instanceof Array) {
+      options.routerParams[routerParam] = {
+        _default: _checkArray(options.routerParams[routerParam])
+      }
+    } else if (typeof options.routerParams[routerParam] === 'string' || typeof options.routerParams[routerParam] === 'number') {
+      options.routerParams[routerParam] = {
+        _default: _checkArray([options.routerParams[routerParam]])
+      }
+    } else if (typeof options.routerParams[routerParam] === 'object') {
+      for (const otherRouterParam of Object.keys(options.routerParams[routerParam])) {
+        if (typeof options.routerParams[routerParam][otherRouterParam] === 'string' || typeof options.routerParams[routerParam][otherRouterParam] === 'number') {
+          options.routerParams[routerParam][otherRouterParam] = {
+            _default: _checkArray([options.routerParams[routerParam][otherRouterParam]])
+          }
+        } else if (options.routerParams[routerParam][otherRouterParam] instanceof Array) {
+          const _arr = options.routerParams[routerParam][otherRouterParam]
+          options.routerParams[routerParam][otherRouterParam] = {
+            _default: _checkArray(_arr)
+          }
+        } else if (typeof options.routerParams[routerParam][otherRouterParam] === 'object') {
+          for (const paramValue of Object.keys(options.routerParams[routerParam][otherRouterParam])) {
+            if (typeof options.routerParams[routerParam][otherRouterParam][paramValue] === 'string' || typeof options.routerParams[routerParam][otherRouterParam][paramValue] === 'number') {
+              options.routerParams[routerParam][otherRouterParam][paramValue] = _checkArray([options.routerParams[routerParam][otherRouterParam][paramValue]])
+            } else if (!(options.routerParams[routerParam][otherRouterParam][paramValue] instanceof Array)) {
+              options.routerParams[routerParam][otherRouterParam][paramValue] = []
+            }
+          }
+        } else {
+          options.routerParams[routerParam][otherRouterParam] = {
+            _default: []
+          }
+        }
+      }
+    } else {
+      options.routerParams[routerParam] = {
+        _default: []
+      }
+    }
+
+    if (!options.routerParams[routerParam]._default) {
+      options.routerParams[routerParam]._default = []
+    }
+  }
+
   if (!(options.paths instanceof Array)) {
     if (typeof options.paths === 'string') {
       options.paths = [options.paths]
@@ -469,8 +626,8 @@ const _fixOptions = function (options) {
   options.verifyPaths = !!options.verifyPaths
   options.tidy = !!options.tidy
 
-  if (!(typeof options.routerParams === 'object')) {
-    options.routerParams = Object.assign({}, _defaultOptions.tidyOptions)
+  if (!(typeof options.tidyOptions === 'object')) {
+    options.tidyOptions = {}
   }
 
   return options
@@ -482,7 +639,7 @@ const _vuePrerender = function (targetPath, _options, cb) {
   let options = {}
   merge(options, _defaultOptions)
   merge(options, _options)
-  options = _fixOptions(options)
+  options = _parseOptions(options)
   LOG.level = options.logLevel
 
   // Run the main function.
