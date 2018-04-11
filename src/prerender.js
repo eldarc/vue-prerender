@@ -349,7 +349,7 @@ async function main (port, targetPath, options) {
 }
 
 const _defaultOptions = {
-  logLevel: 3, // 0 - no log output; 1 (default) - just errors; 2 - errors and warnings; 3 - all output
+  logLevel: 3, // 0 - no log output; 1 - just errors; 2 - errors and warnings; 3 - all output
   parseRouter: true, // Default option. Pre-render will parse the options from `vue-router and pre-render all routes.
   pathExceptions: [], // List of regex patterns or just plain strings which indicate which routes need to be skipped. Patterns are matched against vue-router paths (without injected params).
   urlExceptions: [], // List of regex patterns or just plain strings which indicate which URLs need to be skipped. Patterns are matched against vue-router compiled paths (with injected params).
