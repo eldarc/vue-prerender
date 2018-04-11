@@ -1,6 +1,6 @@
 {
   "name": "vue-prerender",
-  "version": "0.0.4",
+  "version": "0.0.5",
   "description": "Prerender Vue.js pages as HTML.",
   "main": "lib/index.js",
   "jsnext:main": "src/index.js",
@@ -50,6 +50,7 @@
   },
   "dependencies": {
     "colors": "^1.1.2",
+    "combo-wizard": "ministryofprogramming/combo-wizard",
     "del": "^3.0.0",
     "express": "^4.16.2",
     "htmltidy2": "^0.2.1",
