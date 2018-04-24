@@ -22,7 +22,7 @@ There are two main ways of integrating `vue-prerender` into your projects:
 In both cases prerendering needs to start after your build was successful.
 
 ### Prerender script
-Crate a new file called `prerender.js` inside your `build` directory or wherever you wish, with the following contents:
+Create a new file called `prerender.js` inside your `build` directory or wherever you wish, with the following contents:
 
 ```js
 var vuePrerender = require('vue-prerender');
