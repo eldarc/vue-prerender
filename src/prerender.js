@@ -232,7 +232,7 @@ async function main (port, targetPath, options) {
       )
       _pages = removeIgnoredPaths(_pages)
     } while (_pages.length > 0)
-  } if (options.paths && options.paths.length > 1) { // Pre-render a list of pre-defined paths.
+  } else if (options.paths && options.paths.length > 0) { // Pre-render a list of pre-defined paths.
     let _pages = options.paths
     _pages = removeIgnoredPaths(_pages)
     let _renderedPages = []
