@@ -12,11 +12,11 @@ const pathToRegexp = require('path-to-regexp')
 const { readFile, exists, writeFile } = require('mz/fs')
 const del = require('del')
 const { ncp } = require('ncp')
-const mkdirp = require('mkdirp-promise')
 const { uniq, difference, merge } = require('lodash')
 const comboWizard = require('combo-wizard')
 const { tidy } = require('htmltidy2')
 const portfinder = require('portfinder')
+const { fs } = require('mz')
 
 // Default port.
 const DEFAULT_PORT = 4848
@@ -58,15 +58,20 @@ async function main (port, targetPath, options) {
 
   await (() => {
     return new Promise(function (resolve, reject) {
-      ncp(targetPath, sourcePath, {
-        filter: /^((?!\.tmp_prerender).)*$/ // Ignore .tmp_prerender directory.
-      }, (err) => {
-        if (err) {
-          // LOG.error(err)
-          reject(err)
+      ncp(
+        targetPath,
+        sourcePath,
+        {
+          filter: /^((?!\.tmp_prerender).)*$/ // Ignore .tmp_prerender directory.
+        },
+        (err) => {
+          if (err) {
+            // LOG.error(err)
+            reject(err)
+          }
+          resolve(true)
         }
-        resolve(true)
-      })
+      )
     })
   })()
 
@@ -83,14 +88,16 @@ async function main (port, targetPath, options) {
   app.get('*', (req, res) => res.send(index))
 
   // Starting the express server.
-  server = await (new Promise((resolve, reject) => {
-    const s = app.listen(port, e => e ? reject(e) : resolve(s))
-  }))
+  server = await new Promise((resolve, reject) => {
+    const s = app.listen(port, (e) => (e ? reject(e) : resolve(s)))
+  })
 
   LOG.info(`Started server ${HOST}`)
 
   // Launching Puppeteer.
-  browser = await puppeteer.launch({args: ['--no-sandbox', '--disable-setuid-sandbox']})
+  browser = await puppeteer.launch({
+    args: ['--no-sandbox', '--disable-setuid-sandbox']
+  })
 
   LOG.info('Started browser.')
 
@@ -107,7 +114,10 @@ async function main (port, targetPath, options) {
     // Verify if path is valid in vue-router.
     let pathValid = true
     if (options.verifyPaths) {
-      const matched = await page.evaluate((path) => window._vuePrerender.$router.match(path).matched.length, path)
+      const matched = await page.evaluate(
+        (path) => window._vuePrerender.$router.match(path).matched.length,
+        path
+      )
 
       if (matched === undefined) {
         pathValid = true // `vue-router` not found, accept all paths.
@@ -138,8 +148,8 @@ async function main (port, targetPath, options) {
       }
 
       // Check if directory exists, if not create the directory.
-      if (!(await exists(dir))) {
-        await mkdirp(dir)
+      if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true })
       }
 
       // Write the rendered HTML file.
@@ -208,7 +218,8 @@ async function main (port, targetPath, options) {
   }
 
   // Functionality of three main options.
-  if (options.catchPaths) { // Pre-render pages by catching all links from pages recursively.
+  if (options.catchPaths) {
+    // Pre-render pages by catching all links from pages recursively.
     let _pages = ['']
     let _renderedPages = []
 
@@ -219,7 +230,9 @@ async function main (port, targetPath, options) {
       await page.goto(`${HOST}/${removeLeadingSlash(path)}`)
 
       // Get the HTML content after Chromium finishes rendering.
-      const result = await page.evaluate(() => document.documentElement.outerHTML)
+      const result = await page.evaluate(
+        () => document.documentElement.outerHTML
+      )
       await savePage(path, result)
 
       // Add current page to the `_renderedPages` array.
@@ -227,12 +240,19 @@ async function main (port, targetPath, options) {
 
       // Set `_pages` with the pages that still need to be rendered.
       _pages = difference(
-        uniq(_pages.concat(result.match(/href="\/[/\w\d-]*"/g).map(s => s.match(/\/([/\w\d-]*)/)[1]))),
+        uniq(
+          _pages.concat(
+            result
+              .match(/href="\/[/\w\d-]*"/g)
+              .map((s) => s.match(/\/([/\w\d-]*)/)[1])
+          )
+        ),
         _renderedPages
       )
       _pages = removeIgnoredPaths(_pages)
     } while (_pages.length > 0)
-  } else if (options.paths && options.paths.length > 0) { // Pre-render a list of pre-defined paths.
+  } else if (options.paths && options.paths.length > 0) {
+    // Pre-render a list of pre-defined paths.
     let _pages = options.paths
     _pages = removeIgnoredPaths(_pages)
     let _renderedPages = []
@@ -243,13 +263,16 @@ async function main (port, targetPath, options) {
         await page.goto(`${HOST}/${removeLeadingSlash(path)}`)
 
         // Get the HTML content after Chromium finishes rendering.
-        const result = await page.evaluate(() => document.documentElement.outerHTML)
+        const result = await page.evaluate(
+          () => document.documentElement.outerHTML
+        )
         await savePage(path, result)
 
         _renderedPages.push(path)
       }
     }
-  } else if (options.parseRouter) { // Pre-render pages by parsing the `vue-router` options.
+  } else if (options.parseRouter) {
+    // Pre-render pages by parsing the `vue-router` options.
     // Requesting the index page.
     await page.goto(`${HOST}/`)
 
@@ -279,13 +302,17 @@ async function main (port, targetPath, options) {
 
     let pathsSet = true
     if (paths === 'GLOBAL_VAR_UNDEFINED') {
-      LOG.error('Global `window._vuePrerender` variable not defined (please refer to the documentation).')
+      LOG.error(
+        'Global `window._vuePrerender` variable not defined (please refer to the documentation).'
+      )
       pathsSet = false
     } else if (paths === 'ROUTER_UNDEFINED') {
       LOG.error('`vue-router` not defined.')
       pathsSet = false
     } else if (paths === 'ROUTER_NOT_HISTORY_MODE') {
-      LOG.error('`vue-router` not in `history` mode (please refer to the documentation).')
+      LOG.error(
+        '`vue-router` not in `history` mode (please refer to the documentation).'
+      )
       pathsSet = false
     }
 
@@ -337,7 +364,9 @@ async function main (port, targetPath, options) {
       }
     }
   } else {
-    LOG.error('Pre-rendering couldn\'t be started because these three configuration options are all set to false: `parseRouter`, `paths`, `catchPaths`. Please refer to the documentation.')
+    LOG.error(
+      "Pre-rendering couldn't be started because these three configuration options are all set to false: `parseRouter`, `paths`, `catchPaths`. Please refer to the documentation."
+    )
   }
 
   // Close Chromium and the express server.
@@ -369,7 +398,12 @@ const _defaultOptions = {
 }
 
 const _parseOptions = function (options) {
-  if (options.logLevel !== 0 && options.logLevel !== 1 && options.logLevel !== 2 && options.logLevel !== 3) {
+  if (
+    options.logLevel !== 0 &&
+    options.logLevel !== 1 &&
+    options.logLevel !== 2 &&
+    options.logLevel !== 3
+  ) {
     options.logLevel = 0
   }
 
@@ -415,15 +449,6 @@ const _parseOptions = function (options) {
   // All strings and numbers at any level will be converted to an array with just that value in the array.
   // Objects are parsed until the last level, where a blank array will be set if there is no string, number or array.
   // Proper arrays will be set as the data set.
-  const _checkArray = (_arr) => {
-    for (const i in _arr) {
-      if (_arr[i] === '') {
-        _arr[i] = undefined
-      }
-    }
-
-    return _arr
-  }
 
   if (!(options.paths instanceof Array)) {
     if (typeof options.paths === 'string') {
@@ -455,7 +480,8 @@ const _vuePrerender = function (targetPath, _options, cb) {
 
   // Run the main function.
   portfinder.basePort = DEFAULT_PORT
-  portfinder.getPortPromise()
+  portfinder
+    .getPortPromise()
     .then((port) => {
       main(port, targetPath, options)
         .then(() => {
@@ -466,7 +492,7 @@ const _vuePrerender = function (targetPath, _options, cb) {
             cb()
           }
         })
-        .catch(err => {
+        .catch((err) => {
           LOG.error(err)
 
           // Close Chromium and the express server.
